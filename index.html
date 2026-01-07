@@ -72,7 +72,9 @@
 
         // --- Logic: CSV Parsing ---
         const parseCSV = (csv) => {
-            const lines = csv.trim().split('\n');
+            // Normalize line breaks to handle CRLF (Windows) and LF (Unix)
+            const normalizedCsv = csv.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const lines = normalizedCsv.trim().split('\n');
             
             // CSV Parser handling quotes
             const parseLine = (text) => {
@@ -380,7 +382,17 @@
                         if (!response.ok) {
                             throw new Error(`Data fetch failed: ${response.status} ${response.statusText}`);
                         }
-                        const csvText = await response.text();
+                        
+                        // Explicitly decode as UTF-8
+                        const buffer = await response.arrayBuffer();
+                        const decoder = new TextDecoder('utf-8');
+                        let csvText = decoder.decode(buffer);
+                        
+                        // Remove BOM (Byte Order Mark) if present (common in Excel UTF-8 CSVs)
+                        if (csvText.charCodeAt(0) === 0xFEFF) {
+                            csvText = csvText.slice(1);
+                        }
+
                         const parsedData = parseCSV(csvText);
                         setData(parsedData);
                         setIsLoading(false);
@@ -410,6 +422,8 @@
                         const rawVal = d[field];
                         if (!rawVal) return;
                         if (isMulti) {
+                            // Split by comma, but be mindful of data that might use commas differently
+                            // Here we use simple split assuming CSV parse already handled major structures
                             rawVal.split(',').forEach(v => {
                                 const val = v.trim();
                                 if (val) counts[val] = (counts[val] || 0) + 1;
