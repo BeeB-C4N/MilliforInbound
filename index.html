@@ -70,36 +70,66 @@
             loader: <path d="M21 12a9 9 0 1 1-6.219-2.565"/>
         };
 
-        // --- Logic: CSV Parsing ---
-        const parseCSV = (csv) => {
-            // Normalize line breaks to handle CRLF (Windows) and LF (Unix)
-            const normalizedCsv = csv.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            const lines = normalizedCsv.trim().split('\n');
+        // --- Logic: CSV Parsing (Robust) ---
+        const parseCSV = (text) => {
+            // Robust CSV parser that handles newlines inside quotes
+            const rows = [];
+            let currentRow = [];
+            let currentField = '';
+            let inQuote = false;
             
-            // CSV Parser handling quotes
-            const parseLine = (text) => {
-                const result = [];
-                let cur = '';
-                let inQuote = false;
-                for (let i = 0; i < text.length; i++) {
-                    const char = text[i];
+            // Normalize line breaks
+            const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+            for (let i = 0; i < normalizedText.length; i++) {
+                const char = normalizedText[i];
+                const nextChar = normalizedText[i + 1];
+
+                if (inQuote) {
                     if (char === '"') {
-                        inQuote = !inQuote;
-                    } else if (char === ',' && !inQuote) {
-                        result.push(cur);
-                        cur = '';
+                        if (nextChar === '"') {
+                            // Escaped quote ("") -> literal quote (")
+                            currentField += '"';
+                            i++; // Skip next quote
+                        } else {
+                            // End of quote
+                            inQuote = false;
+                        }
                     } else {
-                        cur += char;
+                        currentField += char;
+                    }
+                } else {
+                    if (char === '"') {
+                        inQuote = true;
+                    } else if (char === ',') {
+                        // End of field
+                        currentRow.push(currentField);
+                        currentField = '';
+                    } else if (char === '\n') {
+                        // End of row
+                        currentRow.push(currentField);
+                        if (currentRow.length > 1 || (currentRow.length === 1 && currentRow[0] !== '')) {
+                             rows.push(currentRow);
+                        }
+                        currentRow = [];
+                        currentField = '';
+                    } else {
+                        currentField += char;
                     }
                 }
-                result.push(cur);
-                return result;
-            };
+            }
+            // Push last field/row if exists
+            if (currentField || currentRow.length > 0) {
+                currentRow.push(currentField);
+                rows.push(currentRow);
+            }
 
-            // Index Mapping based on the provided CSV structure
-            return lines.slice(1).map(line => {
-                if (!line.trim()) return null;
-                const vals = parseLine(line);
+            // The first row is the header, data starts from index 1
+            if (rows.length < 2) return [];
+
+            return rows.slice(1).map(vals => {
+                // Basic validation: ensure we have enough columns
+                // Using 5 as a safety net, though real data has more
                 if (vals.length < 5) return null;
 
                 return {
@@ -406,7 +436,19 @@
                 fetchData();
             }, []);
 
-            const facilities = useMemo(() => [...new Set(data.map(d => d.facility))], [data]);
+            // Aggregate facilities with counts
+            const facilityStats = useMemo(() => {
+                const stats = {};
+                data.forEach(d => {
+                    if (d.facility) {
+                        stats[d.facility] = (stats[d.facility] || 0) + 1;
+                    }
+                });
+                // Convert to array and sort by count descending
+                return Object.entries(stats)
+                    .map(([name, count]) => ({ name, count }))
+                    .sort((a, b) => b.count - a.count);
+            }, [data]);
 
             const filteredData = useMemo(() => {
                 if (!selectedFacility) return [];
@@ -506,19 +548,22 @@
                             </div>
                             <Card className="border-t-4 border-t-slate-600">
                                 <h2 className="text-lg font-bold mb-6 text-center text-slate-800">分析する施設を選択</h2>
-                                <div className="space-y-3">
-                                    {facilities.map((fac, idx) => (
+                                <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                                    {facilityStats.map((fac, idx) => (
                                         <button
                                             key={idx}
-                                            onClick={() => setSelectedFacility(fac)}
+                                            onClick={() => setSelectedFacility(fac.name)}
                                             className="w-full p-4 text-left border border-slate-200 rounded-xl hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 transition-all group flex items-center justify-between bg-white shadow-sm"
                                         >
-                                            <span className="font-bold">{fac}</span>
-                                            <Icon path={icons.arrowLeft} className="rotate-180 opacity-30 group-hover:opacity-100 transition-opacity text-slate-400" size={20} />
+                                            <span className="font-bold">{fac.name}</span>
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full">{fac.count}件</span>
+                                                <Icon path={icons.arrowLeft} className="rotate-180 opacity-30 group-hover:opacity-100 transition-opacity text-slate-400" size={20} />
+                                            </div>
                                         </button>
                                     ))}
                                 </div>
-                                {facilities.length === 0 && (
+                                {facilityStats.length === 0 && (
                                     <p className="text-center text-sm text-slate-400 mt-4">利用可能な施設データが見つかりませんでした。</p>
                                 )}
                             </Card>
