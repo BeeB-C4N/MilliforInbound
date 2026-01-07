@@ -16,13 +16,17 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        /* Custom scrollbar for tabs */
-        .scrollbar-hide::-webkit-scrollbar {
-            display: none;
+        /* Custom scrollbar for tabs/lists */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
         }
-        .scrollbar-hide {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 3px;
         }
         body {
             font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
@@ -78,7 +82,7 @@
             let currentField = '';
             let inQuote = false;
             
-            // Normalize line breaks
+            // Normalize line breaks to LF
             const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
             for (let i = 0; i < normalizedText.length; i++) {
@@ -129,7 +133,6 @@
 
             return rows.slice(1).map(vals => {
                 // Basic validation: ensure we have enough columns
-                // Using 5 as a safety net, though real data has more
                 if (vals.length < 5) return null;
 
                 return {
@@ -157,7 +160,7 @@
                     travelStyle: vals[21],
                     transportJapan: vals[23],
                     
-                    // 26: Expenditure
+                    // 26: Expenditure (Remove non-numeric characters like " JPY")
                     expenditure: parseInt((vals[26] || '0').replace(/[^0-9]/g, ''), 10),
                     
                     ishikawaStatus: vals[27],
@@ -169,7 +172,7 @@
                     events: vals[34],
                     transportIshikawa: vals[35]
                 };
-            }).filter(item => item !== null);
+            }).filter(item => item !== null && !isNaN(item.recScore));
         };
 
         // --- UI Components ---
@@ -269,12 +272,27 @@
             );
         };
 
-        // CSS-based Histogram
-        const Histogram = ({ data }) => {
-            const values = data.map(d => d.expenditure).filter(v => !isNaN(v)).sort((a, b) => a - b);
+        // Helper to calculate precise median from raw data
+        const calculateMedian = (dataset) => {
+            const values = dataset
+                .map(d => d.expenditure)
+                .filter(v => !isNaN(v) && v > 0)
+                .sort((a, b) => a - b);
+            
+            if (values.length === 0) return 0;
             const mid = Math.floor(values.length / 2);
-            const median = values.length > 0 ? (values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2) : 0;
+            return values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+        };
 
+        // CSS-based Histogram
+        const Histogram = ({ data, globalData }) => {
+            // Calculate medians from raw data (not bins)
+            const median = calculateMedian(data);
+            const globalMedian = calculateMedian(globalData);
+
+            // Create bins for the selected facility (data)
+            const values = data.map(d => d.expenditure).filter(v => !isNaN(v)).sort((a, b) => a - b);
+            
             const bins = [
                 { name: '<5万', max: 50000, count: 0 },
                 { name: '5-10万', max: 100000, count: 0 },
@@ -295,8 +313,12 @@
                     <div className="flex justify-between items-start mb-6">
                         <h4 className="font-bold text-slate-700">旅行総支出額 (1人あたり)</h4>
                         <div className="text-right">
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wider">中央値</p>
-                            <p className="text-xl font-bold text-slate-800">¥{median.toLocaleString()}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">全体の中央値 (全施設)</p>
+                            <p className="text-xl font-bold text-slate-800">¥{globalMedian.toLocaleString()}</p>
+                            <div className="mt-1 flex items-center justify-end gap-1.5 text-xs text-slate-500">
+                                <span className="text-[10px] uppercase tracking-wider">当施設:</span>
+                                <span className="font-semibold">¥{median.toLocaleString()}</span>
+                            </div>
                         </div>
                     </div>
                     
@@ -304,12 +326,15 @@
                     <div className="w-full h-[200px] flex items-end justify-between gap-2 pt-4 border-b border-slate-100 pb-2">
                         {bins.map((bin, i) => {
                             const heightPct = (bin.count / maxCount) * 100;
-                            const isSelected = bin.name === '10-20万'; // Highlight example
+                            // Highlight bin containing facility median
+                            const isMedianBin = (i === bins.length - 1 && median >= 300000) || 
+                                              (median >= (i===0?0:bins[i-1].max) && median < bin.max);
+                            
                             return (
-                                <div key={i} className="flex flex-col items-center justify-end w-full h-full group">
-                                    <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">{bin.count}</div>
+                                <div key={i} className="flex flex-col items-center justify-end w-full h-full group relative">
+                                    <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5">{bin.count}</div>
                                     <div 
-                                        className={`w-full rounded-t-sm transition-all duration-500 ${isSelected ? 'bg-slate-600' : 'bg-slate-400'}`}
+                                        className={`w-full rounded-t-sm transition-all duration-500 ${isMedianBin ? 'bg-slate-700' : 'bg-slate-300'}`}
                                         style={{ height: `${heightPct}%` }}
                                     ></div>
                                 </div>
@@ -364,7 +389,7 @@
                             </button>
                         ))}
                     </div>
-                    <div className="divide-y divide-slate-50 max-h-[600px] overflow-y-auto bg-white">
+                    <div className="divide-y divide-slate-50 max-h-[600px] overflow-y-auto bg-white custom-scrollbar">
                         {comments.map((item, idx) => {
                             let content = '';
                             let label = '';
@@ -464,8 +489,7 @@
                         const rawVal = d[field];
                         if (!rawVal) return;
                         if (isMulti) {
-                            // Split by comma, but be mindful of data that might use commas differently
-                            // Here we use simple split assuming CSV parse already handled major structures
+                            // Split by comma
                             rawVal.split(',').forEach(v => {
                                 const val = v.trim();
                                 if (val) counts[val] = (counts[val] || 0) + 1;
@@ -556,9 +580,9 @@
                                             className="w-full p-4 text-left border border-slate-200 rounded-xl hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 transition-all group flex items-center justify-between bg-white shadow-sm"
                                         >
                                             <span className="font-bold">{fac.name}</span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full">{fac.count}件</span>
-                                                <Icon path={icons.arrowLeft} className="rotate-180 opacity-30 group-hover:opacity-100 transition-opacity text-slate-400" size={20} />
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">{fac.count}件</span>
+                                                <Icon path={icons.arrowLeft} className="rotate-180 opacity-30 group-hover:opacity-100 transition-opacity text-slate-400" size={18} />
                                             </div>
                                         </button>
                                     ))}
@@ -706,7 +730,7 @@
                                 </div>
                                 <div>
                                     <SectionHeader title="消費" iconPath={icons.wallet} />
-                                    <Histogram data={filteredData} />
+                                    <Histogram data={filteredData} globalData={data} />
                                 </div>
                             </div>
                         </section>
