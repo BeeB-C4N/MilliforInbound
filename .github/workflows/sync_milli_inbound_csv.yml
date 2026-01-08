@@ -14,7 +14,7 @@ jobs:
     env:
       INBOUND_ID: 1kTxDg3TwlfpcJLteZXHDxtyCD4rG_zCFG1AUa9auEb8
       INBOUND_GID: "2095131599"
-      OUT_INBOUND: ./milli_inbound.csv
+      OUT_INBOUND: ./milliforinbound.csv
 
     steps:
       - name: Checkout
